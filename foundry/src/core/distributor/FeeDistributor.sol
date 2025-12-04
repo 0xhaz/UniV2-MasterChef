@@ -229,6 +229,190 @@ contract FeeDistributor is IFeeDistributor, ReentrancyGuard {
         }
     }
 
+    /// @notice Adds a token to tracking if not already tracked
+    /// @param token Address of the token to track
+    function _addTokenToTracking(address token) internal {
+        if (!isTokenTracked[token] && token != address(0)) {
+            trackedTokens.push(token);
+            isTokenTracked[token] = true;
+            lastProcessedBalance[token] = 0;
+        }
+    }
+
+    /// @notice Manually add tokens to tracking when needed
+    /// @param tokens Array of token addresses to start tracking
+    function addTokensToTracking(address[] calldata tokens) external onlyOwner {
+        for (uint256 i = 0; i < tokens.length; i++) {
+            _addTokenToTracking(tokens[i]);
+        }
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                            PROCESSING PHASE
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Processes jobs from the queue with gas management
+    /// @param maxJobs Maximum number of jobs to attempt processing
+    function processQueue(uint256 maxJobs) external nonReentrant {
+        if (emergencyPaused) revert EmergencyPaused();
+        if (maxJobs == 0) revert IFeeDistributor.InvalidAmount();
+        if (maxJobs > MAX_JOBS_PER_BATCH) maxJobs = MAX_JOBS_PER_BATCH;
+
+        uint256 gasStart = gasleft();
+        uint256 jobsProcessed = 0;
+        uint256 jobsFailed = 0;
+
+        _sortQueueByPriority();
+
+        while (jobsProcessed < maxJobs && processingQueue.length > 0) {
+            ProcessingJob memory job = processingQueue[0];
+
+            uint256 gasBeforeJob = gasleft();
+            bool success = _processJob(job);
+            uint256 gasUsedForJob = gasBeforeJob - gasleft();
+
+            if (success) {
+                _removeFromQueue(0);
+                jobsProcessed++;
+                totalJobsProcessed++;
+
+                if (failureCount > 0) {
+                    failureCount = 0;
+                }
+            } else {
+                _handleJobFailure(0);
+                jobsFailed++;
+                totalJobsFailed++;
+            }
+        }
+
+        lastQueueProcessTime = block.timestamp;
+        uint256 totalGasUsed = gasStart - gasleft();
+
+        emit QueueProcessed(jobsProcessed, jobsFailed, totalGasUsed, processingQueue.length);
+
+        _tryAutoDistribute();
+    }
+
+    /// @notice Processes a single job from the queue
+    /// @param job The processing job to execute
+    /// @return success True if job processed successfully, false otherwise
+    function _processJob(ProcessingJob memory job) internal returns (bool) {
+        if (pendingBalance[job.token] < job.amount) {
+            emit ProcessingFailed(job.token, job.amount, "Insufficient pending balance");
+            return false;
+        }
+
+        uint256 actualBalance = IERC20(job.token).balanceOf(address(this));
+        uint256 processAmount = actualBalance < job.amount ? actualBalance : job.amount;
+
+        if (processAmount == 0) {
+            emit ProcessingFailed(job.token, job.amount, "Zero process amount");
+            return false;
+        }
+
+        pendingBalance[job.token] -= processAmount;
+
+        try this._safeProcessToken(job.token, processAmount, job.jobType) {
+            lastProcessedBalance[job.token] = IERC20(job.token).balanceOf(address(this));
+
+            emit JobProcessed(job.token, processAmount, job.jobType);
+            return true;
+        } catch {
+            pendingBalance[job.token] += processAmount;
+
+            emit ProcessingFailed(job.token, processAmount, "Processing error");
+            return false;
+        }
+    }
+
+    /// @notice Safely processes a token with proper error handling
+    /// @param token Address of the token to process
+    /// @param amount Amount of the token to process
+    /// @param jobType Type of processing job
+    /// @dev This function is called externally by _processJob to enable try/catch
+    function _safeProcessToken(address token, uint256 amount, ProcessingType jobType) external {
+        if (msg.sender != address(this)) revert Unauthorized();
+
+        if (jobType == ProcessingType.LP_TOKEN) {
+            _processLPTokenSafe(token, amount);
+        } else {
+            _convertTokenToPonderSafe(token, amount);
+        }
+    }
+
+    /// @notice Safely processes LP tokens with gas management
+    /// @param lpToken LP token address
+    /// @param amount Amount of LP tokens to process
+    function _processLPTokenSafe(address lpToken, uint256 amount) internal {
+        IPonderPair pair = IPonderPair(lpToken);
+        _safeApprove(lpToken, address(ROUTER), amount);
+
+        (uint256 amount0, uint256 amount1) = ROUTER.removeLiquidity(
+            pair.token0(), pair.token1(), amount, 0, 0, address(this), block.timestamp + 300
+        );
+
+        emit LPTokenProcessed(lpToken, amount, amount0, amount1);
+    }
+
+    /// @notice Safely converts regular tokens to PONDER
+    /// @param token Token address to convert
+    /// @param amount Amount of tokens to convert
+    function _convertTokenToPonderSafe(address token, uint256 amount) internal {
+        if (token == PONDER) return;
+
+        address[] memory path = _getOptimalPathToPonder(token);
+        if (path.length == 0) revert NoConversionPath();
+
+        _safeApprove(token, address(ROUTER), amount);
+
+        uint256[] memory amounts =
+            ROUTER.swapExactTokensForTokens(amount, 0, path, address(this), block.timestamp + 300);
+
+        emit FeesConverted(token, amount, amounts[amounts.length - 1]);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                            QUEUE MANAGEMENT
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Adds a token to the processing queue
+    /// @param token Address of the token to add
+    /// @param amount Amount of the token to process
+    function _addToProcessingQueue(address token, uint256 amount) internal {
+        uint256 existingIndex = tokenQueueIndex[token];
+        if (existingIndex > 0 && existingIndex <= processingQueue.length) {
+            ProcessingJob storage existingJob = processingQueue[existingIndex - 1];
+            existingJob.amount += amount;
+            existingJob.priority = _calculatePriority(token, existingJob.amount);
+            existingJob.timestamp = block.timestamp;
+
+            emit JobUpdated(token, existingJob.amount, existingJob.priority);
+
+            return;
+        }
+
+        ProcessingType jobType =
+            _isLPToken(token) ? ProcessingType.LP_TOKEN : ProcessingType.REGULAR_TOKEN;
+
+        uint256 priority = _calculatePriority(token, amount);
+
+        ProcessingJob memory job = ProcessingJob({
+            token: token,
+            amount: amount,
+            priority: priority,
+            estimatedGas: 200_000, // Simple fixed estimate
+            timestamp: block.timestamp,
+            jobType: jobType,
+            failureCount: 0
+        });
+
+        processingQueue.push(job);
+        tokenQueueIndex[token] = processingQueue.length;
+
+        emit JobQueued(token, amount, priority, 200_000, jobType);
+    }
+
     function distribute() external override { }
 
     function convertFees(address token) external override { }
@@ -296,4 +480,14 @@ contract FeeDistributor is IFeeDistributor, ReentrancyGuard {
     error EmergencyPaused();
     error EmptyArray();
     error TooManyPairs();
+
+    /*//////////////////////////////////////////////////////////////
+                        MODIFIERS
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Restricts function access to contract owner
+    modifier onlyOwner() {
+        if (msg.sender != owner) revert IFeeDistributor.NotOwner();
+        _;
+    }
 }
