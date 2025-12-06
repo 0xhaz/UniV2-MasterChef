@@ -413,6 +413,62 @@ contract FeeDistributor is IFeeDistributor, ReentrancyGuard {
         emit JobQueued(token, amount, priority, 200_000, jobType);
     }
 
+    /// @notice Removes a job from the queue
+    /// @param index Index of job to remove
+    function _removeFromQueue(uint256 index) internal {
+        if (index >= processingQueue.length) return;
+
+        address tokenToRemove = processingQueue[index].token;
+
+        if (index < processingQueue.length - 1) {
+            ProcessingJob memory lastJob = processingQueue[processingQueue.length - 1];
+            processingQueue[index] = lastJob;
+            tokenQueueIndex[lastJob.token] = index + 1;
+        }
+
+        processingQueue.pop();
+        delete tokenQueueIndex[tokenToRemove];
+
+        emit JobRemoved(tokenToRemove, index);
+    }
+
+    /// @notice Sorts the queue by priority (highest first)
+    function _sortQueueByPriority() internal {
+        uint256 length = processingQueue.length;
+        if (length <= 1) return;
+
+        for (uint256 i = 0; i < length - 1; i++) {
+            for (uint256 j = 0; j < length - i - 1; j++) {
+                if (processingQueue[j].priority < processingQueue[j + 1].priority) {
+                    ProcessingJob memory temp = processingQueue[j];
+                    processingQueue[j] = processingQueue[j + 1];
+                    processingQueue[j + 1] = temp;
+
+                    tokenQueueIndex[processingQueue[j].token] = j + 1;
+                    tokenQueueIndex[processingQueue[j + 1].token] = j + 2;
+                }
+            }
+        }
+    }
+
+    /// @notice Calculates priority score for a token (minimal design)
+    /// @param token Address of the token
+    /// @param amount Amount of the token to process
+    /// @return priority Calculated priority score (higher = more urgent)
+    function _calculatePriority(address token, uint256 amount) internal view returns (uint256) {
+        if (amount == 0) return 0;
+
+        if (token == KKUB) {
+            return 1000;
+        }
+
+        if (token == PONDER) {
+            return 900;
+        }
+
+        return 100;
+    }
+
     function distribute() external override { }
 
     function convertFees(address token) external override { }
