@@ -469,7 +469,110 @@ contract FeeDistributor is IFeeDistributor, ReentrancyGuard {
         return 100;
     }
 
-    function distribute() external override { }
+    /// @notice Handles job failure with retry logic
+    /// @param jobIndex Index of the failed job
+    function _handleJobFailure(uint256 jobIndex) internal {
+        if (jobIndex >= processingQueue.length) return;
+
+        ProcessingJob storage job = processingQueue[jobIndex];
+        job.failureCount += 1;
+
+        failureCount += 1;
+
+        if (failureCount >= MAX_FAILURES) {
+            emergencyPaused = true;
+            emit EmergencyPausedActivated(block.timestamp, "Failures");
+            return;
+        }
+
+        if (job.failureCount >= 3) {
+            emit JobAbandoned(job.token, job.amount, job.failureCount);
+            _removeFromQueue(jobIndex);
+            return;
+        }
+
+        job.priority = job.priority / 2;
+        job.timestamp = block.timestamp;
+
+        ProcessingJob memory failedJob = processingQueue[jobIndex];
+        _removeFromQueue(jobIndex);
+        processingQueue.push(failedJob);
+        tokenQueueIndex[failedJob.token] = processingQueue.length;
+
+        emit JobRetry(failedJob.token, failedJob.amount, failedJob.failureCount);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                              DISTRIBUTION
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Distributes accumulated PONDER tokens to staking contract
+    function distribute() external nonReentrant {
+        if (emergencyPaused) revert EmergencyPaused();
+
+        uint256 ponderBalance = IERC20(PONDER).balanceOf(address(this));
+
+        if (ponderBalance == 0) {
+            revert IFeeDistributor.InvalidAmount();
+        }
+
+        if (block.timestamp < lastDistributionTimestamp + DISTRIBUTION_COOLDOWN) {
+            revert IFeeDistributor.DistributionTooFrequent();
+        }
+
+        _distribute();
+    }
+
+    /// @notice Internal distribution logic
+    function _distribute() internal {
+        uint256 totalAmount = IERC20(PONDER).balanceOf(address(this));
+        if (totalAmount == 0) return;
+
+        lastDistributionTimestamp = block.timestamp;
+
+        if (!IERC20(PONDER).transfer(address(STAKING), totalAmount)) {
+            revert IFeeDistributor.TransferFailed();
+        }
+
+        emit FeesDistributed(totalAmount);
+    }
+
+    /// @notice Attempts automatic distribution if conditions are met
+    function _tryAutoDistribute() internal {
+        uint256 ponderBalance = IERC20(PONDER).balanceOf(address(this));
+
+        if (
+            ponderBalance > 0
+                && block.timestamp >= lastDistributionTimestamp + DISTRIBUTION_COOLDOWN
+        ) {
+            _distribute();
+        }
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                            ADMIN & EMERGENCY
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Emergency pause mechanism to halt processing
+    function emergencyPause() external onlyOwner {
+        emergencyPaused = true;
+        emit EmergencyPausedActivated(block.timestamp, "Manual");
+    }
+
+    /// @notice Resume operations after emergency pause
+    function emergencyResume() external onlyOwner {
+        emergencyPaused = false;
+        failureCount = 0;
+        emit EmergencyPausedDeactivated(block.timestamp);
+    }
+
+    /// @notice Manually process a stuck token with higher gas limits
+    /// @param token Address of the token to process
+    /// @param amount Amount of the token to process
+    function emergencyProcessToken(address token, uint256 amount) external onlyOwner {
+        if (!emergencyPaused) revert NotInEmergencyMode();
+        if (gasLeft() < 100_000) revert InsufficientGas();
+    }
 
     function convertFees(address token) external override { }
 
