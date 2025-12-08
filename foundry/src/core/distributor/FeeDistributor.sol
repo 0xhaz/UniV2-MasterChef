@@ -572,15 +572,147 @@ contract FeeDistributor is IFeeDistributor, ReentrancyGuard {
     function emergencyProcessToken(address token, uint256 amount) external onlyOwner {
         if (!emergencyPaused) revert NotInEmergencyMode();
         if (gasLeft() < 100_000) revert InsufficientGas();
+
+        uint256 gasStart = gasleft();
+
+        if (_isLPToken(token)) {
+            _processLPTokenSafe(token, amount);
+        } else {
+            _convertTokenToPonderSafe(token, amount);
+        }
+
+        if (pendingBalance[token] >= amount) {
+            pendingBalance[token] -= amount;
+        }
+
+        lastProcessedBalance[token] = IERC20(token).balanceOf(address(this));
+
+        emit EmergencyProcessing(token, amount, gasStart - gasleft());
     }
 
-    function convertFees(address token) external override { }
+    /// @notice Reset balance tracking for migration scenarios
+    /// @param tokens Array of token addresses
+    /// @param balances Array of balance values to set
+    functoin resetBalanceTracking(address[] calldata tokens, uint[] calldata balances) external onlyOwner {
+        if(tokens.length != balances.length) revert InvalidLengthMismatch();
 
-    function minimumAmount() external pure override returns (uint256) { }
+        for(uint i = 0; i < tokens.length; i++) {
+            lastProcessedBalance[tokens[i]] = balances[i];
+            pendingBalance[tokens[i]] = 0;
+
+            uint queueIndex = tokenQueueIndex[tokens[i]];
+            if(queueIndex > 0) {
+                _removeFromQueue(queueIndex - 1);
+            }
+        }
+
+        emit BalanceTrackingReset(tokens, balances);
+    }
+
+    /// @notice Clear the entire processing queue
+    function clearQueue() external onlyOwner {
+        uint queueLength = processingQueue.length;
+
+        for(uint i = 0; i < queueLength; i++) {
+            delete tokenQueueIndex[processingQueue[i].token];
+        }
+
+        delete processingQueue;
+
+        emit QueueCleared(queueLength);
+    }
+
+     /*//////////////////////////////////////////////////////////////
+                            VIEW & MONITORING
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Get comprehensive contract status (hyper-minimal)
+    function getStatus() external view returns (
+        uint queueLength,
+        uint totalPendingUSD,
+        uint ponderBalance,
+        uint nextDistributionTime,
+        bool canDistribute,
+        uint[3] memory avgGasPerJob,
+        uint successRate
+    ) {
+        queueLength = processingQueue.length;
+        totalPendingUSD = 0;
+        ponderBalance = IERC20(PONDER).balanceOf(address(this));
+        nextDistributionTime = lastDistributionTimestamp + DISTRIBUTION_COOLDOWN;
+        canDistribute = block.timestamp >= nextDistributionTime && ponderBalance > 0;
+
+        avgGasPerJob[0] = 150_000;
+        avgGasPerJob[1] = 300_000;
+        avgGasPerJob[2] = 500_000;
+
+        successRate = totalJobsProcessed + totalJobsFailed > 0 ? (totalJobsProcessed * 10_000) / (totalJobsProcessed + totalJobsFailed) : 10000;
+    }
+
+    /// @notice Get queue length
+    /// @return length Number of jobs in the processing queue
+    function getQueueLength() external view returns (uint256 length) {
+        length = processingQueue.length;
+    }
+
+    /// @notice Get specific job details
+    /// @param index Index of the job in the queue
+    /// @return job Processing job details
+    function getJobDetails(uint256 index) external view returns (ProcessingJob memory job) {
+        if (index >= processingQueue.length) revert InvalidIndex();
+        return processingQueue[index];
+    }
+
+   
 
     /*//////////////////////////////////////////////////////////////
                             INTERNAL HELPERS
     //////////////////////////////////////////////////////////////*/
+
+    /// @notice Checks if token is an LP token
+    /// @param token Token address
+    /// @return isLP Whether token is LP token
+    function _isLPToken(address token) internal view returns (bool) {
+        if (token.code.length == 0) return false;
+
+        try IPonderPair(token).factory() returns (address factory) {
+            return factory == address(FACTORY);
+        } catch  {
+            return false;
+        }
+    }
+
+    /// @notice Checks if token has a conversion path to PONDER
+    /// @param token Token address
+    /// @return hasPath Whether conversion path exists
+    function _hasConversionPath(address token) internal view returns (bool) {
+        if(token == PONDER) return true;
+        if(token == KKUB) return true;
+
+        if(FACTORY.getPair(token, PONDER) != address(0)) return true;
+        if(FACTORY.getPair(token, KKUB) != address(0)) return true
+
+        return false;
+    }
+
+    /// @notice Gets optimal swap path to PONDER
+    /// @param tokenIn Input token address
+    /// @return path Optimal swap path
+    function _getOptimalPathToPonder(address tokenIn) internal view returns (address[] memory path) {
+        if(tokenIn == PONDER) {
+            path = new address[](1);
+            path[0] = PONDER;
+            return path;
+        }
+
+        address directPair = FACTORY.getPair(tokenIn, PONDER);
+        if(directPair != address(0)) {
+            path = new address[](2);
+            path[0] = tokenIn;
+            path[1] = PONDER;
+            return path;
+        }
+    }
 
     function _safeApprove(address token, address spender, uint256 amount) internal {
         uint256 currentAllowance = _getSafeAllowance(token, address(this), spender);
@@ -627,6 +759,10 @@ contract FeeDistributor is IFeeDistributor, ReentrancyGuard {
         }
         return 0;
     }
+
+     function convertFees(address token) external override { }
+
+    function minimumAmount() external pure override returns (uint256) { }
 
     /*//////////////////////////////////////////////////////////////
                                  EVENTS
