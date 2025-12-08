@@ -332,7 +332,7 @@ contract FeeDistributor is IFeeDistributor, ReentrancyGuard {
     /// @param jobType Type of processing job
     /// @dev This function is called externally by _processJob to enable try/catch
     function _safeProcessToken(address token, uint256 amount, ProcessingType jobType) external {
-        if (msg.sender != address(this)) revert Unauthorized();
+        if (msg.sender != address(this)) revert UnauthorizedCall();
 
         if (jobType == ProcessingType.LP_TOKEN) {
             _processLPTokenSafe(token, amount);
@@ -481,7 +481,7 @@ contract FeeDistributor is IFeeDistributor, ReentrancyGuard {
 
         if (failureCount >= MAX_FAILURES) {
             emergencyPaused = true;
-            emit EmergencyPausedActivated(block.timestamp, "Failures");
+            emit EmergencyPauseActivated(block.timestamp, "Failures");
             return;
         }
 
@@ -556,14 +556,14 @@ contract FeeDistributor is IFeeDistributor, ReentrancyGuard {
     /// @notice Emergency pause mechanism to halt processing
     function emergencyPause() external onlyOwner {
         emergencyPaused = true;
-        emit EmergencyPausedActivated(block.timestamp, "Manual");
+        emit EmergencyPauseActivated(block.timestamp, "Manual");
     }
 
     /// @notice Resume operations after emergency pause
     function emergencyResume() external onlyOwner {
         emergencyPaused = false;
         failureCount = 0;
-        emit EmergencyPausedDeactivated(block.timestamp);
+        emit EmergencyPauseDeactivated(block.timestamp);
     }
 
     /// @notice Manually process a stuck token with higher gas limits
@@ -571,7 +571,7 @@ contract FeeDistributor is IFeeDistributor, ReentrancyGuard {
     /// @param amount Amount of the token to process
     function emergencyProcessToken(address token, uint256 amount) external onlyOwner {
         if (!emergencyPaused) revert NotInEmergencyMode();
-        if (gasLeft() < 100_000) revert InsufficientGas();
+        if (gasleft() < 100_000) revert InsufficientGas();
 
         uint256 gasStart = gasleft();
 
@@ -593,15 +593,21 @@ contract FeeDistributor is IFeeDistributor, ReentrancyGuard {
     /// @notice Reset balance tracking for migration scenarios
     /// @param tokens Array of token addresses
     /// @param balances Array of balance values to set
-    functoin resetBalanceTracking(address[] calldata tokens, uint[] calldata balances) external onlyOwner {
-        if(tokens.length != balances.length) revert InvalidLengthMismatch();
+    function resetBalanceTracking(
+        address[] calldata tokens,
+        uint256[] calldata balances
+    )
+        external
+        onlyOwner
+    {
+        if (tokens.length != balances.length) revert ArrayLengthMismatch();
 
-        for(uint i = 0; i < tokens.length; i++) {
+        for (uint256 i = 0; i < tokens.length; i++) {
             lastProcessedBalance[tokens[i]] = balances[i];
             pendingBalance[tokens[i]] = 0;
 
-            uint queueIndex = tokenQueueIndex[tokens[i]];
-            if(queueIndex > 0) {
+            uint256 queueIndex = tokenQueueIndex[tokens[i]];
+            if (queueIndex > 0) {
                 _removeFromQueue(queueIndex - 1);
             }
         }
@@ -611,9 +617,9 @@ contract FeeDistributor is IFeeDistributor, ReentrancyGuard {
 
     /// @notice Clear the entire processing queue
     function clearQueue() external onlyOwner {
-        uint queueLength = processingQueue.length;
+        uint256 queueLength = processingQueue.length;
 
-        for(uint i = 0; i < queueLength; i++) {
+        for (uint256 i = 0; i < queueLength; i++) {
             delete tokenQueueIndex[processingQueue[i].token];
         }
 
@@ -622,20 +628,24 @@ contract FeeDistributor is IFeeDistributor, ReentrancyGuard {
         emit QueueCleared(queueLength);
     }
 
-     /*//////////////////////////////////////////////////////////////
+    /*//////////////////////////////////////////////////////////////
                             VIEW & MONITORING
     //////////////////////////////////////////////////////////////*/
 
     /// @notice Get comprehensive contract status (hyper-minimal)
-    function getStatus() external view returns (
-        uint queueLength,
-        uint totalPendingUSD,
-        uint ponderBalance,
-        uint nextDistributionTime,
-        bool canDistribute,
-        uint[3] memory avgGasPerJob,
-        uint successRate
-    ) {
+    function getStatus()
+        external
+        view
+        returns (
+            uint256 queueLength,
+            uint256 totalPendingUSD,
+            uint256 ponderBalance,
+            uint256 nextDistributionTime,
+            bool canDistribute,
+            uint256[3] memory avgGasPerJob,
+            uint256 successRate
+        )
+    {
         queueLength = processingQueue.length;
         totalPendingUSD = 0;
         ponderBalance = IERC20(PONDER).balanceOf(address(this));
@@ -646,7 +656,9 @@ contract FeeDistributor is IFeeDistributor, ReentrancyGuard {
         avgGasPerJob[1] = 300_000;
         avgGasPerJob[2] = 500_000;
 
-        successRate = totalJobsProcessed + totalJobsFailed > 0 ? (totalJobsProcessed * 10_000) / (totalJobsProcessed + totalJobsFailed) : 10000;
+        successRate = totalJobsProcessed + totalJobsFailed > 0
+            ? (totalJobsProcessed * 10_000) / (totalJobsProcessed + totalJobsFailed)
+            : 10_000;
     }
 
     /// @notice Get queue length
@@ -663,8 +675,6 @@ contract FeeDistributor is IFeeDistributor, ReentrancyGuard {
         return processingQueue[index];
     }
 
-   
-
     /*//////////////////////////////////////////////////////////////
                             INTERNAL HELPERS
     //////////////////////////////////////////////////////////////*/
@@ -677,7 +687,7 @@ contract FeeDistributor is IFeeDistributor, ReentrancyGuard {
 
         try IPonderPair(token).factory() returns (address factory) {
             return factory == address(FACTORY);
-        } catch  {
+        } catch {
             return false;
         }
     }
@@ -686,11 +696,11 @@ contract FeeDistributor is IFeeDistributor, ReentrancyGuard {
     /// @param token Token address
     /// @return hasPath Whether conversion path exists
     function _hasConversionPath(address token) internal view returns (bool) {
-        if(token == PONDER) return true;
-        if(token == KKUB) return true;
+        if (token == PONDER) return true;
+        if (token == KKUB) return true;
 
-        if(FACTORY.getPair(token, PONDER) != address(0)) return true;
-        if(FACTORY.getPair(token, KKUB) != address(0)) return true
+        if (FACTORY.getPair(token, PONDER) != address(0)) return true;
+        if (FACTORY.getPair(token, KKUB) != address(0)) return true;
 
         return false;
     }
@@ -698,22 +708,43 @@ contract FeeDistributor is IFeeDistributor, ReentrancyGuard {
     /// @notice Gets optimal swap path to PONDER
     /// @param tokenIn Input token address
     /// @return path Optimal swap path
-    function _getOptimalPathToPonder(address tokenIn) internal view returns (address[] memory path) {
-        if(tokenIn == PONDER) {
+    function _getOptimalPathToPonder(address tokenIn)
+        internal
+        view
+        returns (address[] memory path)
+    {
+        if (tokenIn == PONDER) {
             path = new address[](1);
             path[0] = PONDER;
             return path;
         }
 
         address directPair = FACTORY.getPair(tokenIn, PONDER);
-        if(directPair != address(0)) {
+        if (directPair != address(0)) {
             path = new address[](2);
             path[0] = tokenIn;
             path[1] = PONDER;
             return path;
         }
+
+        address kkubPair = FACTORY.getPair(tokenIn, KKUB);
+        address ponderKkubPair = FACTORY.getPair(KKUB, PONDER);
+
+        if (kkubPair != address(0) && ponderKkubPair != address(0)) {
+            path = new address[](3);
+            path[0] = tokenIn;
+            path[1] = KKUB;
+            path[2] = PONDER;
+            return path;
+        }
+
+        path = new address[](0);
     }
 
+    /// @notice Safe token approval handling broken implementations
+    /// @param token Token address
+    /// @param spender Spender address
+    /// @param amount Amount to approve
     function _safeApprove(address token, address spender, uint256 amount) internal {
         uint256 currentAllowance = _getSafeAllowance(token, address(this), spender);
         if (currentAllowance >= amount) return;
@@ -760,21 +791,82 @@ contract FeeDistributor is IFeeDistributor, ReentrancyGuard {
         return 0;
     }
 
-     function convertFees(address token) external override { }
-
-    function minimumAmount() external pure override returns (uint256) { }
-
     /*//////////////////////////////////////////////////////////////
-                                 EVENTS
+                            EVENTS
     //////////////////////////////////////////////////////////////*/
+
+    /// @notice Emitted when fees are collected from pairs
+    event FeesCollected(address[] indexed pairs, uint256 gasUsed, uint256 timestamp);
+
+    /// @notice Emitted when fee collection fails for a pair
     event CollectionFailed(address indexed pair, string reason);
 
+    /// @notice Emitted when balance tracking is updated
+    event BalanceUpdated(
+        address indexed token, uint256 lastBalance, uint256 newBalance, uint256 delta
+    );
+
+    /// @notice Emitted when processing queue is processed
+    event QueueProcessed(
+        uint256 jobsProcessed, uint256 jobsFailed, uint256 gasUsed, uint256 remainingJobs
+    );
+
+    /// @notice Emitted when a job is queued
+    event JobQueued(
+        address indexed token,
+        uint256 amount,
+        uint256 priority,
+        uint256 estimatedGas,
+        ProcessingType jobType
+    );
+
+    /// @notice Emitted when a job is processed successfully
+    event JobProcessed(address indexed token, uint256 amount, ProcessingType jobType);
+
+    /// @notice Emitted when a job is updated
+    event JobUpdated(address indexed token, uint256 newAmount, uint256 newPriority);
+
+    /// @notice Emitted when a job is removed from queue
+    event JobRemoved(address indexed token, uint256 index);
+
+    /// @notice Emitted when a job fails and is retried
+    event JobRetry(address indexed token, uint256 amount, uint256 failureCount);
+
+    event JobAbandoned(address indexed token, uint256 amount, uint256 failureCount);
+    event ProcessingFailed(address indexed token, uint256 amount, string reason);
+    event LPTokenProcessed(
+        address indexed lpToken, uint256 lpAmount, uint256 amount0, uint256 amount1
+    );
+    event EmergencyPauseActivated(uint256 timestamp, string reason);
+    event EmergencyPauseDeactivated(uint256 timestamp);
+
+    event EmergencyProcessing(address indexed token, uint256 amount, uint256 gasUsed);
+    event BalanceTrackingReset(address[] tokens, uint256[] balances);
+    event QueueCleared(uint256 jobsCleared);
+
     /*//////////////////////////////////////////////////////////////
-                             CUSTOM ERRORS
+                            ERRORS
     //////////////////////////////////////////////////////////////*/
+
     error EmergencyPaused();
+    error NotInEmergencyMode();
+    error ArrayLengthMismatch();
     error EmptyArray();
     error TooManyPairs();
+    error InvalidLPToken();
+    error InsufficientBalance();
+
+    /// @notice Thrown when no conversion path exists
+    error NoConversionPath();
+
+    /// @notice Thrown when unauthorized call is made
+    error UnauthorizedCall();
+
+    /// @notice Thrown when insufficient gas is available
+    error InsufficientGas();
+
+    /// @notice Thrown when invalid index is provided
+    error InvalidIndex();
 
     /*//////////////////////////////////////////////////////////////
                         MODIFIERS
@@ -784,5 +876,37 @@ contract FeeDistributor is IFeeDistributor, ReentrancyGuard {
     modifier onlyOwner() {
         if (msg.sender != owner) revert IFeeDistributor.NotOwner();
         _;
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                    INTERFACE IMPLEMENTATIONS
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Converts accumulated fees from specific tokens to PONDER
+    /// @param token Address of the token to convert to PONDER
+    /// @dev Public wrapper for internal conversion function
+    function convertFees(address token) external nonReentrant {
+        if (emergencyPaused) revert EmergencyPaused();
+        if (token == address(0)) revert IFeeDistributor.ZeroAddress();
+
+        uint256 balance = IERC20(token).balanceOf(address(this));
+        if (balance == 0) revert IFeeDistributor.InvalidAmount();
+
+        if (_isLPToken(token)) {
+            _processLPTokenSafe(token, balance);
+        } else {
+            _convertTokenToPonderSafe(token, balance);
+        }
+
+        lastProcessedBalance[token] = IERC20(token).balanceOf(address(this));
+        if (pendingBalance[token] >= balance) {
+            pendingBalance[token] -= balance;
+        }
+    }
+
+    /// @notice Returns minimum amount required for operations
+    /// @return Minimum token amount threshold (1 USD equivalent)
+    function minimumAmount() external pure returns (uint256) {
+        return 0;
     }
 }
