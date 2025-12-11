@@ -94,4 +94,56 @@ library PonderPairTypes {
         /// @notice Reserve of token1 before swap
         uint256 reserve1;
     }
+
+    /// @notice Data passed to swap callback
+    /// @dev Contains all information needed by callee during swap
+    struct SwapCallbackData {
+        /// @notice Amount of token0 to output
+        uint256 amount0Out;
+        /// @notice Amount of token1 to output
+        uint256 amount1Out;
+        /// @notice Amount of token0 input
+        uint256 amount0In;
+        /// @notice Amount of token1 input
+        uint256 amount1In;
+        /// @notice Address of token0
+        address token0;
+        /// @notice Address of token1
+        address token1;
+        /// @notice Recipient of output tokens
+        address to;
+        /// @notice Additional data for callback
+        bytes callbackData;
+    }
+
+    /// @notice Holds internal state during swap execution
+    /// @dev Used to track swap progress and maintain CEI pattern
+    /// @dev Separate from SwapData to maintain clear validation boundaries
+    struct SwapState {
+        /// @notice Current reserve of token0
+        uint256 reserve0;
+        /// @notice Current reserve of token1
+        uint256 reserve1;
+        /// @notice Current balance of token0
+        uint256 balance0;
+        /// @notice Current balance of token1
+        uint256 balance1;
+        /// @notice Amount of token0 input
+        uint256 amount0In;
+        /// @notice Amount of token1 input
+        uint256 amount1In;
+        /// @notice Whether pair includes PONDER token
+        bool isPonderPair;
+    }
+
+    /// @notice Pool reserve state
+    /// @dev Packed struct for gas-efficient storage
+    struct Reserves {
+        /// @notice Current reserve of token0
+        uint112 reserve0;
+        /// @notice Current reserve of token1
+        uint112 reserve1;
+        /// @notice Last block timestamp when reserves were updated
+        uint32 blockTimestampLast;
+    }
 }
