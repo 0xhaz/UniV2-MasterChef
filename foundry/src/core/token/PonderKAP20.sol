@@ -43,7 +43,7 @@ contract PonderKAP20 is ERC20, IKAP20 {
     /// @dev keccak256("Permit(address owner,address spender,uint256 value,uint256 nonce,uint256
     /// deadline)")
     /// @dev
-    bytes32 private constant _PERMIT_TYPEHASH =
+    bytes32 private constant PERMIT_TYPEHASH =
         0x6e71edae12b1b97f4d1f60370fef10105fa2faae0126114a169c64845d6126c9;
 
     /// @notice Permit nonces per address
@@ -167,6 +167,14 @@ contract PonderKAP20 is ERC20, IKAP20 {
         _;
     }
 
+    /// @notice Ensures function can only be called by committee
+    /// @dev Reverts with NotAuthorized if caller is not committee
+    modifier onlyCommittee() {
+        if (committee == address(0)) revert NotAuthorized();
+        if (msg.sender != committee) revert NotAuthorized();
+        _;
+    }
+
     /// @notice Ensures function can only be called by super admin
     /// @dev Reverts with NotAuthorized if caller is not super admin
     modifier onlySuperAdmin() {
@@ -215,5 +223,369 @@ contract PonderKAP20 is ERC20, IKAP20 {
             return _CACHED_DOMAIN_SEPARATOR;
         }
         return _computeDomainSeparator();
+    }
+
+    /// @notice Gets current nonce for address
+    /// @dev Used for signature generation
+    /// @param owner_ Address to get nonce for
+    /// @return Current nonce value
+    function nonces(address owner_) public view returns (uint256) {
+        return _nonces[owner_];
+    }
+
+    /// @notice Enables gasless token approvals
+    /// @dev Validates signature and sets approval
+    /// @param owner_ Token owner address
+    /// @param spender Spender address
+    /// @param value Amount to approve
+    /// @param deadline Expiration timestamp for the permit
+    /// @param v ECDSA signature recovery byte
+    /// @param r ECDSA signature half
+    /// @param s ECDSA signature half
+    function permit(
+        address owner_,
+        address spender,
+        uint256 value,
+        uint256 deadline,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    )
+        external
+    {
+        if (block.timestamp > deadline) revert PermitExpired();
+
+        bytes32 digest = keccak256(
+            abi.encodePacked(
+                "\x19\x01",
+                domainSeparator(),
+                keccak256(
+                    abi.encode(PERMIT_TYPEHASH, owner_, spender, value, _nonces[owner_]++, deadline)
+                )
+            )
+        );
+
+        address recoveredAddress = ECDSA.recover(digest, v, r, s);
+        if (recoveredAddress == address(0) || recoveredAddress != owner_) revert InvalidSignature();
+
+        _approve(owner_, spender, value);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                            KAP-20 FUNCTIONS
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Admin function to transfer tokens between addresses
+    /// @dev Only callable by committee
+    /// @param sender The address to transfer tokens from
+    /// @param recipient The address to transfer tokens to
+    /// @param amount The amount of tokens to transfer
+    /// @return success True if the admin transfer was successful
+    function adminTransfer(
+        address sender,
+        address recipient,
+        uint256 amount
+    )
+        external
+        onlyCommittee
+        returns (bool success)
+    {
+        if (address(kyc) != address(0) && isActivatedOnlyKYCAddress) {
+            if (kyc.kycsLevel(sender) == 0) revert KYCNotApproved();
+        }
+
+        _transfer(sender, recipient, amount);
+        return true;
+    }
+
+    /// @notice Internal transfer function that requires both parties to have KYC
+    /// @dev Only callable by super admin or transfer router
+    /// @param sender The address to transfer tokens from
+    /// @param recipient The address to transfer tokens to
+    /// @param amount The amount of tokens to transfer
+    /// @return success True if the internal transfer was successful
+    function internalTransfer(
+        address sender,
+        address recipient,
+        uint256 amount
+    )
+        external
+        onlySuperAdminOrTransferRouter
+        whenNotPaused
+        returns (bool success)
+    {
+        if (address(kyc) != address(0)) {
+            if (
+                kyc.kycsLevel(sender) < acceptedKYCLevel
+                    || kyc.kycsLevel(recipient) < acceptedKYCLevel
+            ) {
+                revert KYCNotApproved();
+            }
+        }
+
+        _transfer(sender, recipient, amount);
+        return true;
+    }
+
+    /// @notice External transfer function that requires sender to have KYC
+    /// @dev Only callable by super admin or transfer router
+    /// @param sender The address to transfer tokens from
+    /// @param recipient The address to transfer tokens to
+    /// @param amount The amount of tokens to transfer
+    /// @return success True if the external transfer was successful
+    function externalTransfer(
+        address sender,
+        address recipient,
+        uint256 amount
+    )
+        external
+        onlySuperAdminOrTransferRouter
+        whenNotPaused
+        returns (bool success)
+    {
+        if (address(kyc) != address(0)) {
+            if (kyc.kycsLevel(sender) < acceptedKYCLevel) {
+                revert KYCNotApproved();
+            }
+        }
+
+        _transfer(sender, recipient, amount);
+        return true;
+    }
+
+    /// @notice Admin function to set an allowance on behalf of an owner
+    /// @dev Only callable by super admin
+    /// @param owner_ The address that will approve the allowance
+    /// @param spender The address that will be able to spend the tokens
+    /// @param amount The amount of tokens the spender can spend
+    /// @return success True if the admin approval was successful
+    function adminApprove(
+        address owner_,
+        address spender,
+        uint256 amount
+    )
+        external
+        onlySuperAdmin
+        returns (bool success)
+    {
+        if (address(kyc) != address(0)) {
+            if (kyc.kycsLevel(owner_) < acceptedKYCLevel) {
+                revert KYCNotApproved();
+            }
+        }
+
+        _approve(owner_, spender, amount);
+        return true;
+    }
+
+    /// @notice Transfers tokens to a specified address
+    /// @param recipient The address to transfer tokens to
+    /// @param amount The amount of tokens to transfer
+    /// @return success True if the transfer was successful
+    function transfer(
+        address recipient,
+        uint256 amount
+    )
+        public
+        virtual
+        override (ERC20)
+        whenNotPaused
+        returns (bool success)
+    {
+        return super.transfer(recipient, amount);
+    }
+
+    /// @notice Transfers tokens from one address to another using allowance
+    /// @param sender The address to transfer tokens from
+    /// @param recipient The address to transfer tokens to
+    /// @param amount The amount of tokens to transfer
+    /// @return success True if the transfer was successful
+    function transferFrom(
+        address sender,
+        address recipient,
+        uint256 amount
+    )
+        public
+        virtual
+        override (ERC20)
+        whenNotPaused
+        returns (bool success)
+    {
+        return super.transferFrom(sender, recipient, amount);
+    }
+
+    /// @notice Sets an allowance for a spender to spend on behalf of the caller
+    /// @param spender The address that will be able to spend the tokens
+    /// @param amount The amount of tokens the spender can spend
+    /// @return success True if the approval was successful
+    function approve(
+        address spender,
+        uint256 amount
+    )
+        public
+        virtual
+        override (ERC20)
+        whenNotPaused
+        returns (bool success)
+    {
+        return super.approve(spender, amount);
+    }
+
+    /// @notice Get balance of an account
+    /// @param account The address to query the balance of
+    /// @return The balance of the account
+    function balanceOf(address account) public view virtual override (ERC20) returns (uint256) {
+        return super.balanceOf(account);
+    }
+
+    /// @notice Get allowance of a spender for an owner_
+    /// @param owner_ The address that approved the allowance
+    /// @param spender The address that can spend the allowance
+    /// @return The amount of tokens the spender can spend
+    function allowance(
+        address owner_,
+        address spender
+    )
+        public
+        view
+        virtual
+        override (ERC20)
+        returns (uint256)
+    {
+        return super.allowance(owner_, spender);
+    }
+
+    /// @notice Get the total supply of tokens
+    /// @return The total supply
+    function totalSupply() public view virtual override (ERC20) returns (uint256) {
+        return super.totalSupply();
+    }
+
+    /// @notice Get the token name
+    /// @return The name of the token
+    function name() public view virtual override (ERC20) returns (string memory) {
+        return super.name();
+    }
+
+    /// @notice Get the token symbol
+    /// @return The symbol of the token
+    function symbol() public view virtual override (ERC20) returns (string memory) {
+        return super.symbol();
+    }
+
+    /// @notice Get the token decimals
+    /// @return The decimals of the token
+    function decimals() public view virtual override (ERC20) returns (uint8) {
+        return super.decimals();
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                     OWNERSHIP AND ADMIN FUNCTIONS
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Get the owner address
+    /// @return The current owner address
+    function owner() public view returns (address) {
+        return _owner;
+    }
+
+    /// @notice Transfers ownership to a new address
+    /// @dev Only callable by current owner
+    /// @param newOwner The address of the new owner
+    function transferOwnership(address newOwner) external onlyOwner {
+        if (newOwner == address(0)) revert ZeroAddress();
+        address oldOwner = _owner;
+        _owner = newOwner;
+
+        emit OwnershipTransferred(oldOwner, newOwner);
+    }
+
+    /// @notice Sets the KYC verification service
+    /// @dev Only callable by owner
+    /// @param _kyc Address of the KYC verification service
+    function setKYC(address _kyc) external onlyOwner {
+        if (_kyc == address(0)) revert ZeroAddress();
+        address oldKyc = address(kyc);
+        kyc = IKYCBitkubChain(_kyc);
+
+        emit KYCBitkubChainSet(msg.sender, oldKyc, _kyc);
+    }
+
+    /// @notice Sets the committee address
+    /// @dev Only callable by owner
+    /// @param _committee Address of the committee
+    function setCommittee(address _committee) external onlyOwner {
+        if (_committee == address(0)) revert ZeroAddress();
+        address oldCommittee = committee;
+        committee = _committee;
+
+        emit CommitteeSet(msg.sender, oldCommittee, _committee);
+    }
+
+    /// @notice Sets the transfer router address
+    /// @dev Only callable by owner
+    /// @param _transferRouter Address of the new transfer router
+    function setTransferRouter(address _transferRouter) external onlyOwner {
+        address oldTransferRouter = transferRouter;
+        transferRouter = _transferRouter;
+        emit TransferRouterSet(msg.sender, oldTransferRouter, _transferRouter);
+    }
+
+    /// @notice Sets the admin project router
+    /// @dev Only callable by owner
+    /// @param _adminProjectRouter Address of the new admin project router
+    function setAdminProjectRouter(address _adminProjectRouter) external onlyOwner {
+        address oldAdminProjectRouter = address(adminProjectRouter);
+        adminProjectRouter = IAdminProjectRouter(_adminProjectRouter);
+        emit AdminProjectRouterSet(msg.sender, oldAdminProjectRouter, _adminProjectRouter);
+    }
+
+    /// @notice Sets the accepted KYC level
+    /// @dev Only callable by owner
+    /// @param _kycLevel The new KYC level
+    function setAcceptedKYCLevel(uint256 _kycLevel) external onlyOwner {
+        uint256 oldKYCLevel = acceptedKYCLevel;
+        acceptedKYCLevel = _kycLevel;
+        emit AcceptedKYCLevelSet(msg.sender, oldKYCLevel, _kycLevel);
+    }
+
+    /// @notice Activates KYC address enforcement
+    /// @dev Only callable by owner
+    function activateOnlyKYCAddress() external onlyOwner {
+        isActivatedOnlyKYCAddress = true;
+        emit ActivateOnlyKYCAddress(msg.sender);
+    }
+
+    /// @notice Pauses the contract
+    /// @dev Only callable by owner
+    function pause() external onlyOwner {
+        _paused = true;
+        emit Paused(msg.sender);
+    }
+
+    /// @notice Unpauses the contract
+    /// @dev Only callable by owner
+    function unpause() external onlyOwner {
+        _paused = false;
+        emit Unpaused(msg.sender);
+    }
+
+    /// @notice Returns the pause state of the contract
+    /// @return True if the contract is paused
+    function paused() external view returns (bool) {
+        return _paused;
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                       INTERNAL HOOKS
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Internal transfer hook
+    /// @dev Can be overridden by derived contracts
+    /// @param from Address sending tokens
+    /// @param to Address receiving tokens
+    /// @param amount Amount of tokens transferred
+    function _update(address from, address to, uint256 amount) internal virtual override {
+        super._update(from, to, amount);
     }
 }
