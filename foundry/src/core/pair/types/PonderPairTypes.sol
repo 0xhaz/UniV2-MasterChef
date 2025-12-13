@@ -90,9 +90,9 @@ library PonderPairTypes {
         /// @notice Current balance of token1 in pair
         uint256 balance1;
         /// @notice Reserve of token0 before swap
-        uint256 reserve0;
+        uint112 reserve0;
         /// @notice Reserve of token1 before swap
-        uint256 reserve1;
+        uint112 reserve1;
     }
 
     /// @notice Data passed to swap callback
@@ -121,9 +121,9 @@ library PonderPairTypes {
     /// @dev Separate from SwapData to maintain clear validation boundaries
     struct SwapState {
         /// @notice Current reserve of token0
-        uint256 reserve0;
+        uint112 reserve0;
         /// @notice Current reserve of token1
-        uint256 reserve1;
+        uint112 reserve1;
         /// @notice Current balance of token0
         uint256 balance0;
         /// @notice Current balance of token1

@@ -88,7 +88,7 @@ interface IPonderPair is IERC20 {
     function getReserves()
         external
         view
-        returns (uint256 _reserve0, uint256 _reserve1, uint32 _blockTimestampLast);
+        returns (uint112 _reserve0, uint112 _reserve1, uint32 _blockTimestampLast);
 
     /// @notice Accumulated price oracle data for token0
     /// @dev Used for TWAP calculations
