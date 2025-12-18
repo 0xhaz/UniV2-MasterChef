@@ -132,31 +132,134 @@ contract PonderToken is PonderKAP20, PonderTokenStorage, IPonderToken {
         emit PonderTokenTypes.LauncherUpdated(oldLauncher, launcher_);
     }
 
-    function owner() public view override (IPonderToken, PonderKAP20) returns (address) { }
+    /// @notice Initializes staking of team allocation
+    /// @dev Can only be called once after staking contract is properly set
+    function initializeStaking() external {
+        // Ensure caller is owner
+        if (msg.sender != _owner) revert PonderTokenTypes.Forbidden();
+        // Ensure not already initialized
+        if (_stakingInitialized) revert PonderTokenTypes.AlreadyInitialized();
+        // Ensure staking contract is set
+        if (address(_staking) == address(0)) revert PonderTokenTypes.ZeroAddress();
 
-    function transferOwnership(address newOwner)
-        external
-        override (IPonderToken, PonderKAP20)
-        onlyOwner
-    { }
+        // Update state before external call
+        _stakingInitialized = true;
 
-    function acceptOwnership() external override { }
+        // Approve staking contract
+        _approve(address(this), address(_staking), PonderTokenTypes.TEAM_ALLOCATION);
 
-    function minter() external view override returns (address) { }
+        // Enter staking with team allocation
+        _staking.enter(PonderTokenTypes.TEAM_ALLOCATION, _TEAM_RESERVE);
+    }
 
-    function pendingOwner() external view override returns (address) { }
+    /// @notice Sets the staking contract address
+    /// @dev Can only be called once by owner to set the final staking address
+    /// @dev Initial staking address must be address(1) to allow this update
+    /// @param newStaking Address of the PonderStaking contract
+    function setStaking(address newStaking) external {
+        if (msg.sender != _owner) revert PonderTokenTypes.Forbidden();
+        if (newStaking == address(0)) revert PonderTokenTypes.ZeroAddress();
+        if (address(_staking) != address(1)) revert PonderTokenTypes.AlreadyInitialized();
 
-    function teamReserve() external view override returns (address) { }
+        _staking = IPonderStaking(newStaking);
+    }
 
-    function launcher() external view override returns (address) { }
+    /// @notice Initiates ownership transfer
+    /// @dev First step of two-step ownership transfer
+    /// @dev Sets pending owner for acceptance
+    /// @param newOwner Address proposed as new owner
+    /// @dev Emits OwnershipTransferStarted event
+    function transferOwnership(address newOwner) public override (IPonderToken, PonderKAP20) {
+        if (msg.sender != _owner) revert PonderTokenTypes.Forbidden();
+        if (newOwner == address(0)) revert PonderTokenTypes.ZeroAddress();
 
-    function staking() external view override returns (address) { }
+        _pendingOwner = newOwner;
+        emit PonderTokenTypes.OwnershipTransferStarted(_owner, newOwner);
+    }
 
-    function totalBurned() external view override returns (uint256) { }
+    /// @notice Completes ownership transfer
+    /// @dev Second step of two-step ownership transfer
+    /// @dev Only callable by pending owner
+    function acceptOwnership() external {
+        if (msg.sender != _pendingOwner) revert PonderTokenTypes.Forbidden();
 
-    function deploymentTime() external view override returns (uint256) { }
+        address oldOwner = _owner;
+        _owner = _pendingOwner;
+        _pendingOwner = address(0);
+        emit PonderTokenTypes.OwnershipTransferred(oldOwner, _owner);
+    }
 
-    function maximumSupply() external pure override returns (uint256) { }
+    /*//////////////////////////////////////////////////////////////
+                        VIEW FUNCTIONS - STATE
+    //////////////////////////////////////////////////////////////*/
 
-    function teamAllocation() external pure override returns (uint256) { }
+    /// @notice Current minter address
+    /// @return Address with minting privileges
+    function minter() external view returns (address) {
+        return _minter;
+    }
+
+    /// @notice Current owner address
+    /// @return Address with administrative privileges
+    function owner() public view override (IPonderToken, PonderKAP20) returns (address) {
+        return _owner;
+    }
+
+    /// @notice Address in ownership transfer
+    /// @return Pending owner awaiting acceptance
+    function pendingOwner() external view returns (address) {
+        return _pendingOwner;
+    }
+
+    /// @notice Team allocation recipient
+    /// @return Address receiving vested team tokens
+    function teamReserve() external view returns (address) {
+        return _TEAM_RESERVE;
+    }
+
+    /// @notice Protocol launcher address
+    /// @return Address of the protocol launcher
+    function launcher() external view returns (address) {
+        return _launcher;
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                    VIEW FUNCTIONS - ACCOUNTING
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Total tokens burned
+    /// @return Cumulative amount of burned tokens
+    function totalBurned() external view returns (uint256) {
+        return _totalBurned;
+    }
+
+    /// @notice Contract deployment time
+    /// @return Deployment timestamp
+    function deploymentTime() external view returns (uint256) {
+        return _DEPLOYMENT_TIME;
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                    VIEW FUNCTIONS - CONSTANTS
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Maximum token supply
+    /// @return Total supply cap
+    function maximumSupply() external pure returns (uint256) {
+        return PonderTokenTypes.MAXIMUM_SUPPLY;
+    }
+
+    /// @notice Get the staking contract address
+    /// @dev Override for public state variable to meet interface requirements
+    /// @dev Converts IPonderStaking instance to address type
+    /// @return Address of protocol's xKOI staking contract
+    function staking() external view returns (address) {
+        return address(_staking);
+    }
+
+    /// @notice Total team token allocation
+    /// @return Team token amount
+    function teamAllocation() external pure returns (uint256) {
+        return PonderTokenTypes.TEAM_ALLOCATION;
+    }
 }
