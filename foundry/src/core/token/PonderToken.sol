@@ -118,6 +118,20 @@ contract PonderToken is PonderKAP20, PonderTokenStorage, IPonderToken {
         emit PonderTokenTypes.MinterUpdated(oldMinter, minter_);
     }
 
+    /// @notice Updates launcher address
+    /// @dev Restricted to owner
+    /// @dev Cannot be zero address
+    /// @param launcher_ New launcher address
+    /// @dev Emits LauncherUpdated event
+    function setLauncher(address launcher_) external {
+        if (msg.sender != _owner) revert PonderTokenTypes.Forbidden();
+        if (launcher_ == address(0)) revert PonderTokenTypes.ZeroAddress();
+
+        address oldLauncher = _launcher;
+        _launcher = launcher_;
+        emit PonderTokenTypes.LauncherUpdated(oldLauncher, launcher_);
+    }
+
     function owner() public view override (IPonderToken, PonderKAP20) returns (address) { }
 
     function transferOwnership(address newOwner)
@@ -125,8 +139,6 @@ contract PonderToken is PonderKAP20, PonderTokenStorage, IPonderToken {
         override (IPonderToken, PonderKAP20)
         onlyOwner
     { }
-
-    function setLauncher(address launcher_) external override { }
 
     function acceptOwnership() external override { }
 
