@@ -252,7 +252,7 @@ contract PonderToken is PonderKAP20, PonderTokenStorage, IPonderToken {
     /// @notice Get the staking contract address
     /// @dev Override for public state variable to meet interface requirements
     /// @dev Converts IPonderStaking instance to address type
-    /// @return Address of protocol's xKOI staking contract
+    /// @return Address of protocol's xKOI staking contract.
     function staking() external view returns (address) {
         return address(_staking);
     }
