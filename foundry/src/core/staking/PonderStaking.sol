@@ -23,6 +23,21 @@ import { IPonderFactory } from "../factory/IPonderFactory.sol";
  *      Inherits storage layout and ERC20 functionality
  */
 contract PonderStaking is IPonderStaking, PonderStakingStorage, PonderKAP20("Staked KOI", "xKOI") {
+    using PonderStakingTypes for *;
+    using SafeERC20 for IERC20;
+
+    /*//////////////////////////////////////////////////////////////
+                         IMMUTABLES
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice PONDER token contract reference
+    IERC20 public immutable PONDER;
+
+    /// @notice Protocol router for performing swaps
+    IPonderRouter public immutable ROUTER;
+
+    /// @notice Protocol factory for pair and token management
+    IPonderFactory public immutable FACTORY;
     function enter(uint256 amount, address recipient) external override returns (uint256 shares) { }
 
     function leave(uint256 shares) external override returns (uint256 amount) { }
