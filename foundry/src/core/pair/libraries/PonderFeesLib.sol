@@ -4,7 +4,7 @@ pragma solidity ^0.8.24;
 import { SafeERC20 } from "openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
 import { IERC20 } from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import { PonderPairTypes } from "src/core/pair/types/PonderPairTypes.sol";
-import { ILaunchToken } from "src/core/launch/ILaunchToken.sol";
+import { ILaunchToken } from "src/launch/ILaunchToken.sol";
 
 /*//////////////////////////////////////////////////////////////
                           PONDER FEES LIBRARY
@@ -61,8 +61,8 @@ library PonderFeesLib {
                     / PonderPairTypes.FEE_DENOMINATOR;
             }
         } catch {
-            protocolFee =
-                (amountIn * PonderPairTypes.STANDARD_PROTOCOL_FEE) / PonderPairTypes.FEE_DENOMINATOR;
+            protocolFee = (amountIn * PonderPairTypes.STANDARD_PROTOCOL_FEE)
+                / PonderPairTypes.FEE_DENOMINATOR;
         }
         return (protocolFee, creatorFee);
     }
@@ -147,11 +147,7 @@ library PonderFeesLib {
     /// @dev Ensures K value doesn't decrease after accounting for fees
     /// @param swapData Swap state data including balances and amounts
     /// @return bool True if K value is maintained after the swap
-    function validateKValue(PonderPairTypes.SwapData memory swapData)
-        internal
-        pure
-        returns (bool)
-    {
+    function validateKValue(PonderPairTypes.SwapData memory swapData) internal pure returns (bool) {
         // Use unchecked for gas optimization since overflow is unlikely with realistic values
         unchecked {
             // balance0Adjusted = balance0 * (1 - 0.003) = 0.997 * balance0
@@ -219,7 +215,8 @@ library PonderFeesLib {
         returns (bool isValid)
     {
         // Combined condition for gas optimization
-        return balance0 >= accumulatedFee0 && balance1 >= accumulatedFee1 && balance0 > 0
-            && balance1 > 0;
+        return
+            balance0 >= accumulatedFee0 && balance1 >= accumulatedFee1 && balance0 > 0
+                && balance1 > 0;
     }
 }

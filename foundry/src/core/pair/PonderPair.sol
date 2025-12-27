@@ -11,8 +11,8 @@ import { PonderPairStorage } from "src/core/pair/storage/PonderPairStorage.sol";
 import { PonderPairTypes } from "src/core/pair/types/PonderPairTypes.sol";
 import { IPonderFactory } from "src/core/factory/IPonderFactory.sol";
 import { IPonderCallee } from "src/core/pair/IPonderCallee.sol";
-import { Math } from "src/core/libraries/Math.sol";
-import { UQ112x112 } from "src/core/libraries/UQ112x112.sol";
+import { Math } from "src/libraries/Math.sol";
+import { UQ112x112 } from "src/libraries/UQ112x112.sol";
 
 /*//////////////////////////////////////////////////////////////
                             PONDER PAIR CORE
@@ -396,8 +396,7 @@ contract PonderPair is
 
         // Handle token0 fee if any input
         if (state.amount0In > 0) {
-            (uint256 protocolFee, uint256 creatorFee0, address creator0) = PonderFeesLib
-                .calculateAndReturnProtocolFee(
+            (uint256 protocolFee, uint256 creatorFee0, address creator0) = PonderFeesLib.calculateAndReturnProtocolFee(
                 token0_, state.amount0In, state.isPonderPair, launcherAddr
             );
 
@@ -414,8 +413,7 @@ contract PonderPair is
 
         // Handle token1 fees if any input
         if (state.amount1In > 0) {
-            (uint256 protocolFee1, uint256 creatorFee1, address creator1) = PonderFeesLib
-                .calculateAndReturnProtocolFee(
+            (uint256 protocolFee1, uint256 creatorFee1, address creator1) = PonderFeesLib.calculateAndReturnProtocolFee(
                 token1_, state.amount1In, state.isPonderPair, launcherAddr
             );
 
@@ -464,10 +462,10 @@ contract PonderPair is
             // Update price accumulators if time has elapsed and reserves are non-zero
             if (timeElapsed > 0 && _reserve0Old != 0 && _reserve1Old != 0) {
                 // Accumulate price data for TWAP calculations
-                _price0CumulativeLast +=
-                    uint256(UQ112x112.encode(_reserve1Old).uqdiv(_reserve0Old)) * timeElapsed;
-                _price1CumulativeLast +=
-                    uint256(UQ112x112.encode(_reserve0Old).uqdiv(_reserve1Old)) * timeElapsed;
+                _price0CumulativeLast += uint256(UQ112x112.encode(_reserve1Old).uqdiv(_reserve0Old))
+                * timeElapsed;
+                _price1CumulativeLast += uint256(UQ112x112.encode(_reserve0Old).uqdiv(_reserve1Old))
+                * timeElapsed;
             }
         }
 

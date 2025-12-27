@@ -7,7 +7,7 @@ import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { IERC20Metadata } from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import { IPonderPair } from "src/core/pair/IPonderPair.sol";
 import { IPonderFactory } from "src/core/factory/IPonderFactory.sol";
-import { IPonderRouter } from "src/core/periphery/IPonderRouter.sol";
+import { IPonderRouter } from "src/periphery/router/IPonderRouter.sol";
 import { IPonderStaking } from "src/core/staking/IPonderStaking.sol";
 import { IPonderPriceOracle } from "src/core/oracle/IPonderPriceOracle.sol";
 

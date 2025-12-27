@@ -266,7 +266,9 @@ contract PonderKAP20 is ERC20, IKAP20 {
         );
 
         address recoveredAddress = ECDSA.recover(digest, v, r, s);
-        if (recoveredAddress == address(0) || recoveredAddress != owner_) revert InvalidSignature();
+        if (recoveredAddress == address(0) || recoveredAddress != owner_) {
+            revert InvalidSignature();
+        }
 
         _approve(owner_, spender, value);
     }
@@ -485,14 +487,14 @@ contract PonderKAP20 is ERC20, IKAP20 {
 
     /// @notice Get the owner address
     /// @return The current owner address
-    function owner() public view returns (address) {
+    function owner() public view virtual returns (address) {
         return _owner;
     }
 
     /// @notice Transfers ownership to a new address
     /// @dev Only callable by current owner
     /// @param newOwner The address of the new owner
-    function transferOwnership(address newOwner) external onlyOwner {
+    function transferOwnership(address newOwner) public virtual onlyOwner {
         if (newOwner == address(0)) revert ZeroAddress();
         address oldOwner = _owner;
         _owner = newOwner;
