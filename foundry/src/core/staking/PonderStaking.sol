@@ -38,9 +38,123 @@ contract PonderStaking is IPonderStaking, PonderStakingStorage, PonderKAP20("Sta
 
     /// @notice Protocol factory for pair and token management
     IPonderFactory public immutable FACTORY;
-    function enter(uint256 amount, address recipient) external override returns (uint256 shares) { }
 
-    function leave(uint256 shares) external override returns (uint256 amount) { }
+    /// @notice Initializes the staking contract
+    /// @param _ponder Address of the PONDER token contract
+    /// @param _router Address of the PonderRouter contract
+    /// @param _factory Address of the PonderFactory contract
+    constructor(address _ponder, address _router, address _factory) {
+        if (_ponder == address(0) || _router == address(0) || _factory == address(0)) {
+            revert PonderKAP20.ZeroAddress();
+        }
+        PONDER = IERC20(_ponder);
+        ROUTER = IPonderRouter(_router);
+        FACTORY = IPonderFactory(_factory);
+        stakingOwner = msg.sender;
+        lastRebaseTime = block.timestamp;
+        DEPLOYMENT_TIME = block.timestamp;
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                       STAKING OPERATIONS
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Stakes PONDER tokens for xPONDER shares
+    /// @param amount Amount of PONDER tokens to stake
+    /// @param recipient Address to receive the xPONDER shares
+    /// @return shares Amount of xPONDER shares minted to recipient
+    function enter(uint256 amount, address recipient) external returns (uint256 shares) {
+        if (amount == 0) revert IPonderStaking.InvalidAmount();
+        if (recipient == address(0)) revert PonderKAP20.ZeroAddress();
+
+        uint256 totalPonder = PONDER.balanceOf(address(this));
+        uint256 totalShares = totalSupply();
+
+        // Calculate shares and initialize fee debt
+        if (totalShares == 0) {
+            if (amount < PonderStakingTypes.MINIMUM_FIRST_STAKE) {
+                revert IPonderStaking.InsufficientFirstStake();
+            }
+            shares = amount;
+        } else {
+            // Maintain precision by checking which order of operation is safe
+            uint256 scaledAmount = amount * PonderStakingTypes.FEE_PRECISION;
+            if (scaledAmount / PonderStakingTypes.FEE_PRECISION != amount) {
+                // If scaling would overflow, fall back to original calculation
+                shares = (amount * totalShares) / totalPonder;
+            } else {
+                // Scale up, multiply, then scale down for more precision
+                shares =
+                    (scaledAmount * totalShares) / (totalPonder * PonderStakingTypes.FEE_PRECISION);
+            }
+        }
+
+        // Calculate fee debt - use same scaling approach for consistency
+        uint256 scaledShares = shares * PonderStakingTypes.FEE_PRECISION;
+        if (scaledShares / PonderStakingTypes.FEE_PRECISION != shares) {
+            // If scaling would overflow, fall back to original calculation
+            userFeeDebt[recipient] =
+                (shares * accumulatedFeesPerShare) / PonderStakingTypes.FEE_PRECISION;
+        } else {
+            // Scale up for precision, then scale down
+            userFeeDebt[recipient] = (scaledShares * accumulatedFeesPerShare)
+                / (PonderStakingTypes.FEE_PRECISION * PonderStakingTypes.FEE_PRECISION);
+        }
+
+        _mint(recipient, shares);
+        totalDepositedPonder += amount;
+
+        PONDER.safeTransferFrom(msg.sender, address(this), amount);
+
+        emit Staked(recipient, amount, shares);
+    }
+
+    /// @notice Withdraws PONDER by burning xPONDER shares
+    /// @param shares Amount of xPONDER shares to burn
+    /// @return amount Amount of PONDER tokens withdrawn
+    function leave(uint256 shares) external returns (uint256 amount) {
+        if (msg.sender == IPonderToken(address(PONDER)).teamReserve()) {
+            // This check enforces team token lockup period which is intentionally using
+            // block.timestamp The TEAM_LOCK_DURATION is a long-term duration (days/month) making
+            // this resistant to manipulation
+            // slither-disable-next-line timestamp
+            if (block.timestamp < DEPLOYMENT_TIME + PonderStakingTypes.TEAM_LOCK_DURATION) {
+                revert IPonderStaking.TeamStakingLocked();
+            }
+        }
+
+        if (shares == 0) revert IPonderStaking.InvalidAmount();
+        if (shares > balanceOf(msg.sender)) revert IPonderStaking.InvalidSharesAmount();
+
+        uint256 totalShares = totalSupply();
+        amount = (shares * PONDER.balanceOf(address(this))) / totalShares;
+
+        if (amount < PonderStakingTypes.MINIMUM_WITHDRAW) {
+            revert IPonderStaking.MinimumSharesRequired();
+        }
+
+        uint256 pendingFees = _getPendingFees(msg.sender, shares);
+
+        userFeeDebt[msg.sender] = ((balanceOf(msg.sender) - shares) * accumulatedFeesPerShare)
+            / PonderStakingTypes.FEE_PRECISION;
+
+        _burn(msg.sender, shares);
+
+        totalDepositedPonder -= amount;
+        if (pendingFees > 0) {
+            totalUnclaimedFees -= pendingFees;
+        }
+
+        emit Withdrawn(msg.sender, amount, shares);
+        if (pendingFees > 0) {
+            emit FeesClaimed(msg.sender, pendingFees);
+        }
+
+        PONDER.safeTransfer(msg.sender, amount);
+        if (pendingFees > 0) {
+            PONDER.safeTransfer(msg.sender, pendingFees);
+        }
+    }
 
     function claimFees() external override returns (uint256 amount) { }
 

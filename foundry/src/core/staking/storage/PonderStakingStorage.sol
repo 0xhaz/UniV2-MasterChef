@@ -52,7 +52,7 @@ abstract contract PonderStakingStorage {
     /// @notice Total amount of PONDER tokens staked
     /// @dev Updated on every stake/unstake operation
     /// @dev Used for reward distribution calculations
-    uint256 public totalDepositPonder;
+    uint256 public totalDepositedPonder;
 
     /*//////////////////////////////////////////////////////////////
                           FEE TRACKING STATE
