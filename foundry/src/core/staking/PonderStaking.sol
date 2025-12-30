@@ -173,4 +173,31 @@ contract PonderStaking is IPonderStaking, PonderStakingStorage, PonderKAP20("Sta
     function transferOwnership(address newOwner) public override (IPonderStaking, PonderKAP20) { }
 
     function acceptOwnership() external override { }
+
+    function _getPendingFees(
+        address user,
+        uint256 sharesToWithdraw
+    )
+        internal
+        view
+        returns (uint256)
+    {
+        uint256 userShares = balanceOf(user);
+        uint256 scaledShares = userShares * PonderStakingTypes.FEE_PRECISION;
+        uint256 accumulatedFees =
+            (scaledShares * accumulatedFeesPerShare) / PonderStakingTypes.FEE_PRECISION;
+        uint256 userDebt = userFeeDebt[user];
+
+        uint256 pendingFees;
+        if (accumulatedFees > userDebt) {
+            pendingFees = accumulatedFees - userDebt;
+
+            // Adjust pending fees if withdrawing only a portion of shares
+            if (sharesToWithdraw < userShares) {
+                pendingFees = (pendingFees * sharesToWithdraw * PonderStakingTypes.FEE_PRECISION)
+                    / scaledShares;
+            }
+        }
+        return pendingFees;
+    }
 }
