@@ -34,7 +34,7 @@ library PonderStakingTypes {
     /// @dev Represents 0.0001 shares per token
     uint256 public constant MIN_SHARE_RATIO = 1e14;
 
-    /// @notice Maximum allowed ratio of shares to tokens
+    /// @notice Maximum allowed ratio of shares to tokens.
     /// @dev Prevents share inflation attacks
     /// @dev Represents 100 shares per token
     uint256 public constant MAX_SHARE_RATIO = 100e18;
