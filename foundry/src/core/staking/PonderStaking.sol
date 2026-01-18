@@ -192,7 +192,7 @@ contract PonderStaking is IPonderStaking, PonderStakingStorage, PonderKAP20("Sta
         if (accumulatedFees > userDebt) {
             pendingFees = accumulatedFees - userDebt;
 
-            // Adjust pending fees if withdrawing only a portion of shares
+            // Adjust pending fees if withdrawing only a portion of shares.
             if (sharesToWithdraw < userShares) {
                 pendingFees = (pendingFees * sharesToWithdraw * PonderStakingTypes.FEE_PRECISION)
                     / scaledShares;
